@@ -1,6 +1,7 @@
+streamlit
+matplotlib
 pandas
 numpy
-matplotlib
-seaborn
+scipy
 reportlab
 openpyxl
