@@ -3,7 +3,6 @@ import numpy as np
 import json
 import matplotlib.pyplot as plt
 import seaborn as sns
-import os
 import io
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
@@ -36,8 +35,8 @@ def run_simulation(data, n_simulations=1000):
     for _, row in data.iterrows():
         decision = str(row['decision'])
         dist = str(row['distribution']).lower()
-        params = json.loads(row['params'].replace("'", '"'))
-        p_success = float(row['success_prob'])
+        params = json.loads(row["params"].replace("'", '"'))
+        p_success = float(row["success_prob"])
 
         if dist == "normal":
             values = np.random.normal(params['mean'], params['std'], n_simulations)
@@ -72,29 +71,18 @@ def run_simulation(data, n_simulations=1000):
 
     return pd.concat(results, ignore_index=True)
 
-# ============== Visualizations ==============
-def plot_visualizations(results, summary):
-    st.subheader("📊 Visualizations")
-
-    # KDE
-    fig, ax = plt.subplots()
-    sns.kdeplot(data=results, x="value", hue="decision", fill=True, ax=ax)
-    st.pyplot(fig)
-
-    # Bar
-    fig, ax = plt.subplots()
-    sns.barplot(data=summary, x="decision", y="success_rate", ax=ax)
-    st.pyplot(fig)
-
-    # Boxplot
-    fig, ax = plt.subplots()
-    sns.boxplot(data=results, x="decision", y="value", ax=ax)
-    st.pyplot(fig)
-
-    # Histogram
-    fig, ax = plt.subplots()
-    sns.histplot(data=results, x="value", hue="decision", element="step", bins=30, ax=ax)
-    st.pyplot(fig)
+# ============== Visualization Helper ==============
+def render_and_download(fig, filename, caption):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    st.image(buf, caption=caption)
+    st.download_button(
+        label=f"⬇️ Download {filename}",
+        data=buf,
+        file_name=filename,
+        mime="image/png"
+    )
 
 # ============== Reports ==============
 def generate_pdf_report(summary_df, lang="en"):
@@ -157,9 +145,39 @@ if uploaded_file:
             st.subheader("📑 Summary")
             st.dataframe(summary)
 
-            plot_visualizations(results, summary)
+            st.subheader("📊 Visualizations")
+
+            # KDE
+            fig, ax = plt.subplots()
+            sns.kdeplot(data=results, x="value", hue="decision", fill=True, ax=ax)
+            render_and_download(fig, "kde_plot.png", "KDE Plot: Value Distribution per Decision")
+
+            # Bar
+            fig, ax = plt.subplots()
+            sns.barplot(data=summary, x="decision", y="success_rate", ax=ax)
+            render_and_download(fig, "success_rate.png", "Success Rate by Decision")
+
+            # Boxplot
+            fig, ax = plt.subplots()
+            sns.boxplot(data=results, x="decision", y="value", ax=ax)
+            render_and_download(fig, "boxplot.png", "Boxplot of Decision Values")
+
+            # Histogram
+            fig, ax = plt.subplots()
+            sns.histplot(data=results, x="value", hue="decision", element="step", bins=30, ax=ax)
+            render_and_download(fig, "histogram.png", "Histogram of Values")
+
+            # Scatter
+            fig, ax = plt.subplots()
+            ax.scatter(summary["expected_value"], summary["success_rate"])
+            for i, row in summary.iterrows():
+                ax.text(row["expected_value"], row["success_rate"], row["decision"])
+            ax.set_xlabel("Expected Value")
+            ax.set_ylabel("Success Rate")
+            render_and_download(fig, "scatter.png", "Scatter Plot: EV vs Success Rate")
 
             # Reports
+            st.subheader("📥 Reports")
             pdf_buffer = generate_pdf_report(summary, lang)
             excel_buffer = generate_excel_report(summary)
 
