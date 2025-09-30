@@ -4,58 +4,41 @@ import json
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
-import argparse
+import io
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
-import io
 from openpyxl import Workbook
-
 import streamlit as st
-from decision_analytics import main
-
-st.title("Decision Analytics Tool")
-
-uploaded_file = st.file_uploader("Upload your CSV", type="csv")
-if uploaded_file:
-    with open("uploaded.csv", "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    st.success("File uploaded successfully!")
-
-    if st.button("Run Analysis"):
-        main("uploaded.csv", runs=1, lang="en", outdir="outputs")
-        st.success("Analysis completed! Check the outputs folder.")
 
 # ============== Data Validation ==============
 def validate_data(df):
     required_cols = ["decision", "distribution", "params", "success_prob"]
     for col in required_cols:
         if col not in df.columns:
-            raise ValueError(f"❌ Missing required column: {col}")
+            st.error(f"❌ Missing required column: {col}")
+            return False
 
     for _, row in df.iterrows():
         if not (0 <= row["success_prob"] <= 1):
-            raise ValueError(f"❌ Invalid success_prob in decision {row['decision']}")
-
+            st.error(f"❌ Invalid success_prob in decision {row['decision']}")
+            return False
         try:
-            params = json.loads(row["params"].replace("'", '"'))
+            json.loads(row["params"].replace("'", '"'))
         except Exception as e:
-            raise ValueError(f"❌ Params not valid JSON for {row['decision']}: {e}")
-
+            st.error(f"❌ Params not valid JSON for {row['decision']}: {e}")
+            return False
     return True
-
 
 # ============== Simulation Engine ==============
 def run_simulation(data, n_simulations=1000):
     results = []
-
     for _, row in data.iterrows():
         decision = str(row['decision'])
         dist = str(row['distribution']).lower()
         params = json.loads(row['params'].replace("'", '"'))
         p_success = float(row['success_prob'])
 
-        # distributions
         if dist == "normal":
             values = np.random.normal(params['mean'], params['std'], n_simulations)
         elif dist == "uniform":
@@ -89,60 +72,32 @@ def run_simulation(data, n_simulations=1000):
 
     return pd.concat(results, ignore_index=True)
 
-
 # ============== Visualizations ==============
-def generate_visualizations(results, summary, output_dir):
-    os.makedirs(output_dir, exist_ok=True)
+def plot_visualizations(results, summary):
+    st.subheader("📊 Visualizations")
 
-    # KDE Plot
-    plt.figure()
-    sns.kdeplot(data=results, x="value", hue="decision", fill=True)
-    plt.title("Value Distribution per Decision")
-    plt.savefig(f"{output_dir}/kde_plot.png")
-    plt.close()
+    # KDE
+    fig, ax = plt.subplots()
+    sns.kdeplot(data=results, x="value", hue="decision", fill=True, ax=ax)
+    st.pyplot(fig)
 
-    # Bar Plot Success Rate
-    plt.figure()
-    sns.barplot(data=summary, x="decision", y="success_rate")
-    plt.title("Success Rate by Decision")
-    plt.savefig(f"{output_dir}/success_rate.png")
-    plt.close()
+    # Bar
+    fig, ax = plt.subplots()
+    sns.barplot(data=summary, x="decision", y="success_rate", ax=ax)
+    st.pyplot(fig)
 
     # Boxplot
-    plt.figure()
-    sns.boxplot(data=results, x="decision", y="value")
-    plt.title("Boxplot of Decision Values")
-    plt.savefig(f"{output_dir}/boxplot.png")
-    plt.close()
+    fig, ax = plt.subplots()
+    sns.boxplot(data=results, x="decision", y="value", ax=ax)
+    st.pyplot(fig)
 
     # Histogram
-    plt.figure()
-    sns.histplot(data=results, x="value", hue="decision", element="step", bins=30)
-    plt.title("Histogram of Values")
-    plt.savefig(f"{output_dir}/histogram.png")
-    plt.close()
+    fig, ax = plt.subplots()
+    sns.histplot(data=results, x="value", hue="decision", element="step", bins=30, ax=ax)
+    st.pyplot(fig)
 
-    # Pie chart success rate
-    plt.figure()
-    plt.pie(summary["success_rate"], labels=summary["decision"], autopct='%1.1f%%')
-    plt.title("Success Rate Distribution")
-    plt.savefig(f"{output_dir}/pie_chart.png")
-    plt.close()
-
-    # Scatter plot (expected value vs success rate)
-    plt.figure()
-    plt.scatter(summary["expected_value"], summary["success_rate"])
-    for i, row in summary.iterrows():
-        plt.text(row["expected_value"], row["success_rate"], row["decision"])
-    plt.xlabel("Expected Value")
-    plt.ylabel("Success Rate")
-    plt.title("Scatter Plot: EV vs Success Rate")
-    plt.savefig(f"{output_dir}/scatter.png")
-    plt.close()
-
-
-# ============== PDF Report ==============
-def generate_pdf_report(summary_df, output_path, lang="en"):
+# ============== Reports ==============
+def generate_pdf_report(summary_df, lang="en"):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     styles = getSampleStyleSheet()
@@ -161,12 +116,11 @@ def generate_pdf_report(summary_df, output_path, lang="en"):
         story.append(Spacer(1, 8))
 
     doc.build(story)
-    with open(output_path, "wb") as f:
-        f.write(buffer.getvalue())
+    buffer.seek(0)
+    return buffer
 
-
-# ============== Excel Report ==============
-def generate_excel_report(summary_df, output_path):
+def generate_excel_report(summary_df):
+    buffer = io.BytesIO()
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
@@ -175,48 +129,40 @@ def generate_excel_report(summary_df, output_path):
     for _, row in summary_df.iterrows():
         ws.append(row.tolist())
 
-    wb.save(output_path)
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
 
+# ============== Streamlit UI ==============
+st.title("📈 Decision Analytics Tool")
 
-# ============== Main CLI ==============
-def main():
-    parser = argparse.ArgumentParser(description="Decision Analytics Simulator")
-    parser.add_argument("--input", required=True, help="Path to CSV file with decisions")
-    parser.add_argument("--runs", type=int, default=1000, help="Number of simulations")
-    parser.add_argument("--lang", choices=["en", "ar"], default="en", help="Report language")
-    parser.add_argument("--outdir", default="output", help="Output directory")
-    args = parser.parse_args()
+uploaded_file = st.file_uploader("Upload your CSV", type="csv")
+runs = st.slider("Number of simulations", 100, 5000, 1000, step=100)
+lang = st.radio("Report Language", ["en", "ar"], horizontal=True)
 
-    os.makedirs(args.outdir, exist_ok=True)
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    st.write("Preview:", df.head())
 
-    print("📂 Loading data...")
-    df = pd.read_csv(args.input)
+    if validate_data(df):
+        if st.button("Run Analysis"):
+            results = run_simulation(df, runs)
 
-    print("✅ Validating data...")
-    validate_data(df)
+            summary = results.groupby("decision").agg(
+                expected_value=("value", "mean"),
+                success_rate=("success", "mean"),
+                avg_cost=("value", "median")
+            ).reset_index()
 
-    print("🎲 Running simulations...")
-    results = run_simulation(df, args.runs)
+            st.subheader("📑 Summary")
+            st.dataframe(summary)
 
-    print("📊 Summarizing results...")
-    summary = results.groupby("decision").agg(
-        expected_value=("value", "mean"),
-        success_rate=("success", "mean"),
-        avg_cost=("value", "median")
-    ).reset_index()
+            plot_visualizations(results, summary)
 
-    print("📈 Generating visualizations...")
-    generate_visualizations(results, summary, args.outdir)
+            # Reports
+            pdf_buffer = generate_pdf_report(summary, lang)
+            excel_buffer = generate_excel_report(summary)
 
-    print("📝 Generating reports...")
-    generate_pdf_report(summary, f"{args.outdir}/decision_report.pdf", args.lang)
-    generate_excel_report(summary, f"{args.outdir}/decision_report.xlsx")
-
-    summary.to_csv(f"{args.outdir}/decision_summary.csv", index=False)
-
-    print(f"🎉 Done! Reports saved in {args.outdir}/")
-
-
-if __name__ == "__main__":
-    main()
-
+            st.download_button("⬇️ Download PDF Report", pdf_buffer, file_name="decision_report.pdf")
+            st.download_button("⬇️ Download Excel Report", excel_buffer, file_name="decision_report.xlsx")
+            st.download_button("⬇️ Download CSV Summary", summary.to_csv(index=False).encode("utf-8"), file_name="decision_summary.csv", mime="text/csv")
