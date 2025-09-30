@@ -11,6 +11,20 @@ from reportlab.lib.styles import getSampleStyleSheet
 import io
 from openpyxl import Workbook
 
+import streamlit as st
+from decision_analytics import main
+
+st.title("Decision Analytics Tool")
+
+uploaded_file = st.file_uploader("Upload your CSV", type="csv")
+if uploaded_file:
+    with open("uploaded.csv", "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    st.success("File uploaded successfully!")
+
+    if st.button("Run Analysis"):
+        main("uploaded.csv", runs=1, lang="en", outdir="outputs")
+        st.success("Analysis completed! Check the outputs folder.")
 
 # ============== Data Validation ==============
 def validate_data(df):
@@ -205,3 +219,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
