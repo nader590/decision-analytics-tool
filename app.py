@@ -13,6 +13,35 @@ import streamlit as st
 sns.set_style("whitegrid")
 
 # =========================================
+#       Template CSV Helper
+# =========================================
+def get_template_df():
+    """
+    يبني قالب CSV جاهز يقدر المستخدم يحمله ويعدّل عليه.
+    """
+    data = [
+        {
+            "decision": "Option A",
+            "distribution": "normal",
+            "params": '{"mean": 100, "std": 20}',
+            "success_prob": 0.7,
+        },
+        {
+            "decision": "Option B",
+            "distribution": "uniform",
+            "params": '{"low": 50, "high": 150}',
+            "success_prob": 0.6,
+        },
+        {
+            "decision": "Option C",
+            "distribution": "triangular",
+            "params": '{"left": 40, "mode": 90, "right": 160}',
+            "success_prob": 0.8,
+        },
+    ]
+    return pd.DataFrame(data)
+
+# =========================================
 #           Helper: Parse Params
 # =========================================
 def parse_params(raw, decision, ui_lang="en"):
@@ -252,6 +281,8 @@ def main():
         pdf_button_label = "⬇️ Download PDF report"
         excel_button_label = "⬇️ Download Excel report"
         csv_button_label = "⬇️ Download CSV summary"
+        template_title = "📥 Download CSV Template"
+        template_button = "⬇️ Download sample CSV template"
     else:
         st.title("📈 أداة تحليل القرارات")
         upload_label = "📤 ارفع ملف CSV الخاص بك"
@@ -269,6 +300,18 @@ def main():
         pdf_button_label = "⬇️ تحميل تقرير PDF"
         excel_button_label = "⬇️ تحميل تقرير Excel"
         csv_button_label = "⬇️ تحميل ملخص CSV"
+        template_title = "📥 تحميل قالب CSV جاهز"
+        template_button = "⬇️ تحميل قالب CSV تجريبي"
+
+    # === زر تحميل قالب CSV ===
+    st.markdown(f"### {template_title}")
+    template_df = get_template_df()
+    st.download_button(
+        template_button,
+        template_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="decision_template.csv",
+        mime="text/csv"
+    )
 
     uploaded_file = st.file_uploader(upload_label, type="csv")
     runs = st.slider(runs_label, 100, 5000, 1000, step=100)
