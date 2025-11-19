@@ -18,22 +18,26 @@ sns.set_style("whitegrid")
 def get_template_df():
     """
     يبني قالب CSV جاهز يقدر المستخدم يحمله ويعدّل عليه.
+    الأعمدة: decision, distribution, params, success_prob (+ group اختياري)
     """
     data = [
         {
             "decision": "Option A",
+            "group": "Product",
             "distribution": "normal",
             "params": '{"mean": 100, "std": 20}',
             "success_prob": 0.7,
         },
         {
             "decision": "Option B",
+            "group": "Product",
             "distribution": "uniform",
             "params": '{"low": 50, "high": 150}',
             "success_prob": 0.6,
         },
         {
             "decision": "Option C",
+            "group": "Market",
             "distribution": "triangular",
             "params": '{"left": 40, "mode": 90, "right": 160}',
             "success_prob": 0.8,
@@ -76,6 +80,7 @@ def parse_params(raw, decision, ui_lang="en"):
 #           Data Validation
 # =========================================
 def validate_data(df, ui_lang="en"):
+    # group اختياري
     required_cols = ["decision", "distribution", "params", "success_prob"]
     errors = []
 
@@ -136,11 +141,14 @@ def validate_data(df, ui_lang="en"):
 # =========================================
 def run_simulation(data, n_simulations=1000, ui_lang="en"):
     results = []
+    has_group = "group" in data.columns
+
     for _, row in data.iterrows():
         decision = str(row['decision'])
         dist = str(row['distribution']).strip().lower()
         params = parse_params(row["params"], decision, ui_lang=ui_lang)
         p_success = float(row["success_prob"])
+        group_val = row["group"] if has_group else None
 
         if dist == "normal":
             values = np.random.normal(params['mean'], params['std'], n_simulations)
@@ -175,11 +183,15 @@ def run_simulation(data, n_simulations=1000, ui_lang="en"):
         # محاكاة النجاح/الفشل
         success = np.random.binomial(1, p_success, n_simulations)
 
-        results.append(pd.DataFrame({
+        base_data = {
             "decision": decision,
             "value": values,
             "success": success
-        }))
+        }
+        if has_group:
+            base_data["group"] = group_val
+
+        results.append(pd.DataFrame(base_data))
 
     return pd.concat(results, ignore_index=True)
 
@@ -283,6 +295,14 @@ def main():
         csv_button_label = "⬇️ Download CSV summary"
         template_title = "📥 Download CSV Template"
         template_button = "⬇️ Download sample CSV template"
+        dashboard_title = "📊 Dashboard"
+        best_ev_label = "Best EV decision"
+        best_sr_label = "Best success rate decision"
+        riskiest_label = "Most risky decision (Std Dev)"
+        counts_label = "Decisions / Simulations"
+        group_filter_title = "🧩 Filter / compare by group (optional)"
+        group_filter_label = "Select groups to include:"
+        group_charts_title = "📊 Group comparison"
     else:
         st.title("📈 أداة تحليل القرارات")
         upload_label = "📤 ارفع ملف CSV الخاص بك"
@@ -302,6 +322,14 @@ def main():
         csv_button_label = "⬇️ تحميل ملخص CSV"
         template_title = "📥 تحميل قالب CSV جاهز"
         template_button = "⬇️ تحميل قالب CSV تجريبي"
+        dashboard_title = "📊 لوحة مؤشرات (Dashboard)"
+        best_ev_label = "أفضل قرار من حيث القيمة المتوقعة"
+        best_sr_label = "أفضل قرار من حيث معدل النجاح"
+        riskiest_label = "أكثر قرار مخاطرة (أعلى انحراف معياري)"
+        counts_label = "عدد القرارات / عدد المحاكاة"
+        group_filter_title = "🧩 التصفية والمقارنة حسب المجموعة (اختياري)"
+        group_filter_label = "اختر المجموعات التي تريد تضمينها:"
+        group_charts_title = "📊 مقارنة بين المجموعات"
 
     # === زر تحميل قالب CSV ===
     st.markdown(f"### {template_title}")
@@ -342,22 +370,132 @@ def main():
                         st.error(str(e))
                         return
 
-                    summary = results.groupby("decision").agg(
-                        expected_value=("value", "mean"),
-                        success_rate=("success", "mean"),
-                        avg_cost=("value", "median"),
-                        std_value=("value", "std"),
-                        min_value=("value", "min"),
-                        max_value=("value", "max"),
-                        n_obs=("value", "count")
-                    ).reset_index()
+                    # بناء الـ summary (مع group لو موجود)
+                    agg_dict = {
+                        "expected_value": ("value", "mean"),
+                        "success_rate": ("success", "mean"),
+                        "avg_cost": ("value", "median"),
+                        "std_value": ("value", "std"),
+                        "min_value": ("value", "min"),
+                        "max_value": ("value", "max"),
+                        "n_obs": ("value", "count"),
+                    }
+                    if "group" in results.columns:
+                        agg_dict["group"] = ("group", "first")
+
+                    summary = results.groupby("decision").agg(**agg_dict).reset_index()
 
                 st.subheader(summary_title)
                 st.dataframe(summary)
 
-                # اختيار القرارات للعرض
+                # ========== Dashboard بسيط ==========
+                if not summary.empty:
+                    st.subheader(dashboard_title)
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    # أفضل قرار من حيث EV
+                    best_ev_row = summary.loc[summary["expected_value"].idxmax()]
+                    # أفضل قرار من حيث Success Rate
+                    best_sr_row = summary.loc[summary["success_rate"].idxmax()]
+                    # أكثر قرار مخاطرة (أعلى Std)
+                    riskiest_row = summary.loc[summary["std_value"].idxmax()]
+                    # عدد القرارات / المحاكاة
+                    n_decisions = summary["decision"].nunique()
+                    total_sims = len(results)
+
+                    with col1:
+                        st.metric(
+                            best_ev_label,
+                            f"{best_ev_row['decision']}",
+                            f"{best_ev_row['expected_value']:.2f}"
+                        )
+                    with col2:
+                        st.metric(
+                            best_sr_label,
+                            f"{best_sr_row['decision']}",
+                            f"{best_sr_row['success_rate']:.2f}"
+                        )
+                    with col3:
+                        st.metric(
+                            riskiest_label,
+                            f"{riskiest_row['decision']}",
+                            f"{riskiest_row['std_value']:.2f}"
+                        )
+                    with col4:
+                        st.metric(
+                            counts_label,
+                            f"{n_decisions} / {total_sims}",
+                        )
+
+                # ========= تصفية حسب المجموعة (group) =========
+                working_summary = summary.copy()
+                working_results = results.copy()
+
+                if "group" in summary.columns:
+                    st.subheader(group_filter_title)
+                    groups = working_summary["group"].dropna().unique().tolist()
+                    selected_groups = st.multiselect(
+                        group_filter_label,
+                        options=groups,
+                        default=groups
+                    )
+                    if selected_groups:
+                        working_summary = working_summary[
+                            working_summary["group"].isin(selected_groups)
+                        ]
+                        working_results = working_results[
+                            working_results.get("group").isin(selected_groups)
+                        ]
+
+                        # رسومات مقارنة بين المجموعات (Expected Value & Success Rate)
+                        st.subheader(group_charts_title)
+                        group_metrics = working_results.groupby("group").agg(
+                            expected_value=("value", "mean"),
+                            success_rate=("success", "mean")
+                        ).reset_index()
+
+                        if not group_metrics.empty:
+                            # Expected Value by group
+                            fig, ax = plt.subplots()
+                            sns.barplot(
+                                data=group_metrics, x="group", y="expected_value", ax=ax
+                            )
+                            if ui_lang == "en":
+                                ax.set_title("Expected value by group")
+                                ax.set_xlabel("Group")
+                                ax.set_ylabel("Expected value")
+                                caption = "Expected value per group"
+                            else:
+                                ax.set_title("القيمة المتوقعة حسب المجموعة")
+                                ax.set_xlabel("المجموعة")
+                                ax.set_ylabel("القيمة المتوقعة")
+                                caption = "القيمة المتوقعة لكل مجموعة"
+                            render_and_download(
+                                fig, "group_expected_value.png", caption, ui_lang=ui_lang
+                            )
+
+                            # Success Rate by group
+                            fig, ax = plt.subplots()
+                            sns.barplot(
+                                data=group_metrics, x="group", y="success_rate", ax=ax
+                            )
+                            if ui_lang == "en":
+                                ax.set_title("Success rate by group")
+                                ax.set_xlabel("Group")
+                                ax.set_ylabel("Success rate")
+                                caption = "Success rate per group"
+                            else:
+                                ax.set_title("معدل النجاح حسب المجموعة")
+                                ax.set_xlabel("المجموعة")
+                                ax.set_ylabel("معدل النجاح")
+                                caption = "معدل النجاح لكل مجموعة"
+                            render_and_download(
+                                fig, "group_success_rate.png", caption, ui_lang=ui_lang
+                            )
+
+                # اختيار القرارات للعرض (بعد التصفية بالمجموعة إن وجدت)
                 st.subheader(select_decisions_title)
-                decisions = summary["decision"].unique().tolist()
+                decisions = working_summary["decision"].unique().tolist()
 
                 selected_decisions = st.multiselect(
                     select_decisions_label,
@@ -365,8 +503,12 @@ def main():
                     default=decisions
                 )
 
-                filtered_results = results[results["decision"].isin(selected_decisions)]
-                filtered_summary = summary[summary["decision"].isin(selected_decisions)]
+                filtered_results = working_results[
+                    working_results["decision"].isin(selected_decisions)
+                ]
+                filtered_summary = working_summary[
+                    working_summary["decision"].isin(selected_decisions)
+                ]
 
                 if filtered_results.empty:
                     st.warning(no_data_warning)
